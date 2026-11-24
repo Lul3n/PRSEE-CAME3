@@ -1,0 +1,48 @@
+rules_version = '2';
+
+// Reglas de seguridad de Firestore: quién puede leer y escribir cada colección.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Sesión iniciada y correo verificado.
+    function signedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function myEmail() {
+      return request.auth.token.email;
+    }
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/admins/$(myEmail()));
+    }
+    function isTeacher() {
+      return signedIn() && exists(/databases/$(database)/documents/teachers/$(myEmail()));
+    }
+    function myGroup() {
+      return get(/databases/$(database)/documents/teachers/$(myEmail())).data.group;
+    }
+
+    // Administradores: se dan de alta a mano en la consola.
+    match /admins/{email} {
+      allow read: if signedIn() && myEmail() == email;
+      allow write: if false;
+    }
+
+    // Maestros: los ven admin y maestros; solo el admin los edita.
+    match /teachers/{email} {
+      allow read: if isAdmin() || isTeacher() || (signedIn() && myEmail() == email);
+      allow write: if isAdmin();
+    }
+
+    // Alumnos: admin todo; la maestra solo su grupo; madres y padres solo a sus hijos (lectura).
+    match /students/{id} {
+      allow read: if isAdmin()
+        || (isTeacher() && resource.data.group == myGroup())
+        || (signedIn() && myEmail() in resource.data.tutorEmails);
+      allow create: if isAdmin()
+        || (isTeacher() && request.resource.data.group == myGroup());
+      allow update: if isAdmin()
+        || (isTeacher() && resource.data.group == myGroup() && request.resource.data.group == myGroup());
+      allow delete: if isAdmin();
+    }
+  }
+}
